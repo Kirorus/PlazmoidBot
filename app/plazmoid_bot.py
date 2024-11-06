@@ -5,8 +5,8 @@ import os
 import asyncio
 import logging
 from threading import Thread
-from config import Config
-from app import VideoGeneratorApp
+from .config import Config
+from .app import VideoGeneratorApp
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

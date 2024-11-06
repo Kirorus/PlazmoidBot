@@ -5,7 +5,7 @@ import numpy as np
 import logging
 from skimage.transform import resize
 import json
-from config import Config
+from .config import Config
 
 logging.basicConfig(level=logging.DEBUG)
 

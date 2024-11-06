@@ -2,4 +2,5 @@ python-telegram-bot
 flask
 moviepy
 numpy
-scikit-imagepython-dotenv
+scikit-image
+python-dotenv
