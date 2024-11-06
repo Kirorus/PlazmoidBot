@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify, Response
-import os
+import os, math
 from moviepy.editor import ImageClip, VideoFileClip
 import numpy as np
 import logging
@@ -43,6 +43,8 @@ class VideoGeneratorApp:
                 yield f"data: {json.dumps({'error': True, 'message': str(e)})}\n\n"
         return Response(generate(), mimetype='text/event-stream')
 
+
+
     def generate_video(self):
         try:
             data = request.json
@@ -60,6 +62,15 @@ class VideoGeneratorApp:
     
             base_clip = ImageClip(image_path)
             
+            def ease_in_out_sine(x):
+                return -(math.cos(math.pi * x) - 1) / 2
+            
+            def ease_in_out_quad(x):
+                return 2 * x * x if x < 0.5 else 1 - pow(-2 * x + 2, 2) / 2
+            
+            def ease_in_out_cubic(x):
+                return 4 * x * x * x if x < 0.5 else 1 - pow(-2 * x + 2, 3) / 2
+
             def make_frame(t):
                 half_duration = Config.VIDEO_DURATION / 2
                 
@@ -67,6 +78,9 @@ class VideoGeneratorApp:
                     factor = t / half_duration
                 else:
                     factor = 2.0 - (t / half_duration)
+
+                 # Применяем функцию сглаживания
+                factor = ease_in_out_sine(factor)
                 
                 x = start_frame['x'] + (end_frame['x'] - start_frame['x']) * factor
                 y = start_frame['y'] + (end_frame['y'] - start_frame['y']) * factor
