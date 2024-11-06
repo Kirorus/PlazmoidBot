@@ -18,6 +18,7 @@ class Config:
     
     # Video Generation Settings
     VIDEO_DURATION = 12
+    VIDEO_PING_PONG = True
     VIDEO_FPS = 25
     VIDEO_CODEC = 'libx264'
     VIDEO_PRESET = 'ultrafast'

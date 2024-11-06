@@ -49,28 +49,35 @@ class VideoGeneratorApp:
             start_frame = data['startFrame']
             end_frame = data['endFrame']
             chat_id = data['chat_id']
-
+    
             image_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_image.jpg")
             logging.debug(f"Looking for image at: {image_path}")
             logging.debug(f"Current working directory: {os.getcwd()}")
-
+    
             if not os.path.exists(image_path):
                 raise FileNotFoundError(f"Image file not found: {image_path}")
             video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_video.mp4")
-
+    
             base_clip = ImageClip(image_path)
             
             def make_frame(t):
-                factor = t / 10.0
+                half_duration = Config.VIDEO_DURATION / 2
+                
+                if t <= half_duration:
+                    factor = t / half_duration
+                else:
+                    factor = 2.0 - (t / half_duration)
+                
                 x = start_frame['x'] + (end_frame['x'] - start_frame['x']) * factor
                 y = start_frame['y'] + (end_frame['y'] - start_frame['y']) * factor
                 w = start_frame['width'] + (end_frame['width'] - start_frame['width']) * factor
                 h = start_frame['height'] + (end_frame['height'] - start_frame['height']) * factor
+                
                 frame = base_clip.get_frame(0)
                 cropped = frame[int(y):int(y+h), int(x):int(x+w)]
-                resized = resize(cropped, (1024, 768, 3), preserve_range=True)
+                resized = resize(cropped, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 3), preserve_range=True)
                 return resized.astype(np.uint8)
-
+    
             video = VideoFileClip(image_path, audio=False).set_duration(Config.VIDEO_DURATION)
             video = video.fl(lambda gf, t: make_frame(t))
             
@@ -92,6 +99,7 @@ class VideoGeneratorApp:
         except Exception as e:
             logging.error(f"Error generating video: {e}")
             return jsonify({'success': False, 'message': str(e)})
+
 
 if __name__ == '__main__':
     app_instance = VideoGeneratorApp()

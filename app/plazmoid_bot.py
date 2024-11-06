@@ -99,13 +99,13 @@ class ImageBot:
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start"""
         keyboard = [
-            [InlineKeyboardButton("✨ Создать Плазму", callback_data='create_plasma')],
+            [InlineKeyboardButton("✨ Создать Боковушку", callback_data='create_plasma')],
             [InlineKeyboardButton("ℹ️ Помощь", callback_data='help')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "👋 Привет! Я помогу вам создать эффектную анимацию из вашего изображения.\n"
-            "Выберите действие:",
+            "👋 Хало! Я ПлазмойдБот.\n"
+            "Чего нашаманим?",
             reply_markup=reply_markup
         )
 
