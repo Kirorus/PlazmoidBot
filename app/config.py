@@ -25,8 +25,8 @@ class Config:
     VIDEO_THREADS = 4
     
     # Output Video Dimensions
-    VIDEO_WIDTH = 1024
-    VIDEO_HEIGHT = 768
+    VIDEO_WIDTH = 768
+    VIDEO_HEIGHT = 1024
     
     # Monitoring Settings
     MAX_WAIT_TIME = 300  # seconds
