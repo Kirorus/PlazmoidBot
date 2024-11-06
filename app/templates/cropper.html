@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.12/cropper.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style> 
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Roboto', sans-serif;
+        }
+
+        body {
+            background-color: #f5f5f5;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background-color: #ffffff;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .main-container {
+            flex: 1;
+            padding: 1rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .image-container {
+            background-color: #ffffff;
+            border-radius: 12px;
+            padding: 1rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 1rem;
+            height: calc(80vh - 100px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        img { 
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        .controls-container {
+            background-color: #ffffff;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .button-container {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        button { 
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background-color: #f0f0f0;
+            font-weight: 500;
+            min-width: 160px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        button.active {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        button:disabled {
+            background-color: #e0e0e0;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        #generate-video {
+            background-color: #2196F3;
+            color: white;
+        }
+
+        #generate-video:disabled {
+            background-color: #90CAF9;
+        }
+
+        .progress-container {
+            margin-top: 1.5rem;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background-color: #f0f0f0;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #ccc;
+            transition: background-color 0.3s ease;
+        }
+
+        .status-dot.active {
+            background-color: #4CAF50;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #ffffff;
+            border-top: 2px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            display: none;
+            position: absolute;
+            right: 1rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 1rem 2rem;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 1000;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .toast.success {
+            background-color: #4CAF50;
+        }
+
+        .toast.error {
+            background-color: #f44336;
+        }
+
+        .toast.show {
+            opacity: 1;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.2rem;
+            }
+
+            .image-container {
+                height: calc(60vh - 80px);
+                padding: 0.5rem;
+            }
+
+            .controls-container {
+                padding: 1rem;
+            }
+
+            button {
+                padding: 0.6rem 1.2rem;
+                font-size: 0.9rem;
+                min-width: 140px;
+            }
+
+            .progress-container {
+                margin-top: 1rem;
+            }
+        }
+    </style>
+    <title>Frame Selector</title>
+</head>
+<body>
+    <div class="header">
+        <h1>Create Your Video Animation</h1>
+    </div>
+
+    <div class="main-container">
+        <div class="image-container">
+            <img id="image" src="{{ url_for('static', filename='uploads/' + chat_id + '_image.jpg') }}" alt="Image">
+        </div>
+
+        <div class="controls-container">
+            <div class="button-container">
+                <button id="set-start-frame">
+                    <span>Set Start Frame</span>
+                </button>
+                <button id="set-end-frame">
+                    <span>Set End Frame</span>
+                </button>
+                <button id="generate-video" disabled>
+                    <span>Generate Video</span>
+                    <div class="spinner"></div>
+                </button>
+            </div>
+
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div class="progress-bar-fill"></div>
+                </div>
+                <div class="status-indicator">
+                    <div class="status-dot"></div>
+                    <span class="status-text">Ready to start</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.12/cropper.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const imageElement = document.getElementById('image');
+            const startFrameBtn = document.getElementById('set-start-frame');
+            const endFrameBtn = document.getElementById('set-end-frame');
+            const generateVideoBtn = document.getElementById('generate-video');
+            const progressContainer = document.querySelector('.progress-container');
+            const progressBarFill = document.querySelector('.progress-bar-fill');
+            const spinner = document.querySelector('.spinner');
+            const statusDot = document.querySelector('.status-dot');
+            const statusText = document.querySelector('.status-text');
+            const toast = document.getElementById('toast');
+    
+            const cropper = new Cropper(imageElement, {
+                aspectRatio: 3 / 4,
+                viewMode: 1,
+                responsive: true,
+                restore: false,
+                background: false,
+                modal: true,
+                guides: true,
+                center: true,
+                highlight: false,
+                cropBoxMovable: true,
+                cropBoxResizable: true,
+                toggleDragModeOnDblclick: false,
+            });
+            
+            let startFrame = null;
+            let endFrame = null;
+    
+            function showToast(message, type = 'success') {
+                toast.textContent = message;
+                toast.className = `toast ${type}`;
+                toast.classList.add('show');
+                setTimeout(() => {
+                    toast.classList.remove('show');
+                }, 3000);
+            }
+    
+            function updateStatus(text, isActive = false) {
+                statusText.textContent = text;
+                if (isActive) {
+                    statusDot.classList.add('active');
+                } else {
+                    statusDot.classList.remove('active');
+                }
+            }
+    
+            function resetUI() {
+                spinner.style.display = 'none';
+                progressContainer.style.display = 'none';
+                progressBarFill.style.width = '0%';
+                generateVideoBtn.disabled = false;
+                startFrameBtn.disabled = false;
+                endFrameBtn.disabled = false;
+                updateStatus('Ready to start');
+            }
+    
+            function checkGenerateButton() {
+                if (startFrame && endFrame) {
+                    generateVideoBtn.disabled = false;
+                    updateStatus('Ready to generate', true);
+                }
+            }
+    
+            function startVideoGeneration() {
+                spinner.style.display = 'block';
+                progressContainer.style.display = 'block';
+                generateVideoBtn.disabled = true;
+                startFrameBtn.disabled = true;
+                endFrameBtn.disabled = true;
+                progressBarFill.style.width = '0%';
+                updateStatus('Starting video generation', true);
+            }
+    
+            startFrameBtn.addEventListener('click', () => {
+                startFrame = cropper.getData(true);
+                startFrameBtn.classList.add('active');
+                showToast('Start frame set successfully');
+                updateStatus('Start frame set');
+                checkGenerateButton();
+            });
+    
+            endFrameBtn.addEventListener('click', () => {
+                endFrame = cropper.getData(true);
+                endFrameBtn.classList.add('active');
+                showToast('End frame set successfully');
+                updateStatus('End frame set');
+                checkGenerateButton();
+            });
+    
+            generateVideoBtn.addEventListener('click', () => {
+                if (!startFrame || !endFrame) return;
+    
+                startVideoGeneration();
+    
+                fetch('/generate_video', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        startFrame: startFrame,
+                        endFrame: endFrame,
+                        chat_id: "{{ chat_id }}"
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        // Имитируем прогресс
+                        let progress = 0;
+                        const interval = setInterval(() => {
+                            progress += 2;
+                            if (progress <= 100) {
+                                progressBarFill.style.width = `${progress}%`;
+                                updateStatus(`Processing... ${progress}%`, true);
+                            }
+                            if (progress >= 100) {
+                                clearInterval(interval);
+                                showToast('Video generated successfully!');
+                                updateStatus('Video ready', true);
+                                setTimeout(resetUI, 1000);
+                                window.Telegram?.WebApp?.close();
+                            }
+                        }, 200);
+                    } else {
+                        throw new Error(data.message || 'Error generating video');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showToast(error.message || 'Error generating video', 'error');
+                    updateStatus('Generation failed');
+                    setTimeout(resetUI, 1000);
+                });
+            });
+    
+            // Инициализация начального состояния
+            updateStatus('Select start and end frames');
+            generateVideoBtn.disabled = true;
+        });
+    </script>    
+</body>
+</html>
