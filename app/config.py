@@ -17,7 +17,7 @@ class Config:
     FLASK_DEBUG = True
     
     # Video Generation Settings
-    VIDEO_DURATION = 12
+    VIDEO_DURATION = 24
     VIDEO_PING_PONG = True
     VIDEO_FPS = 25
     VIDEO_CODEC = 'libx264'
