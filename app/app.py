@@ -53,24 +53,26 @@ class VideoGeneratorApp:
             chat_id = data['chat_id']
     
             image_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_image.jpg")
-            logging.debug(f"Looking for image at: {image_path}")
-            logging.debug(f"Current working directory: {os.getcwd()}")
-    
-            if not os.path.exists(image_path):
-                raise FileNotFoundError(f"Image file not found: {image_path}")
+            overlay_path = os.path.join(os.path.dirname(self.UPLOAD_FOLDER), 'SIDE_ADDONS_shurehi_1.mov')
             video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_video.mp4")
     
             base_clip = ImageClip(image_path)
-            
-            def ease_in_out_sine(x):
-                return -(math.cos(math.pi * x) - 1) / 2
-            
-            def ease_in_out_quad(x):
-                return 2 * x * x if x < 0.5 else 1 - pow(-2 * x + 2, 2) / 2
-            
-            def ease_in_out_cubic(x):
-                return 4 * x * x * x if x < 0.5 else 1 - pow(-2 * x + 2, 3) / 2
-
+            overlay_clip = VideoFileClip(overlay_path)
+    
+            def soft_light_blend(base, overlay):
+                # Нормализация значений до диапазона [0, 1]
+                base = base.astype(float) / 255
+                overlay = overlay.astype(float) / 255
+    
+                # Применение формулы смешивания Soft Light
+                mask = base <= 0.5
+                result = np.zeros_like(base)
+                result[mask] = 2 * base[mask] * overlay[mask] + base[mask]**2 * (1 - 2 * overlay[mask])
+                result[~mask] = 2 * base[~mask] * (1 - overlay[~mask]) + np.sqrt(base[~mask]) * (2 * overlay[~mask] - 1)
+    
+                # Возвращаем значения в диапазон [0, 255]
+                return np.clip(result * 255, 0, 255).astype(np.uint8)
+    
             def make_frame(t):
                 half_duration = Config.VIDEO_DURATION / 2
                 
@@ -78,19 +80,32 @@ class VideoGeneratorApp:
                     factor = t / half_duration
                 else:
                     factor = 2.0 - (t / half_duration)
-
-                 # Применяем функцию сглаживания
-                factor = ease_in_out_sine(factor)
+    
+                factor = -(math.cos(math.pi * factor) - 1) / 2
                 
                 x = start_frame['x'] + (end_frame['x'] - start_frame['x']) * factor
                 y = start_frame['y'] + (end_frame['y'] - start_frame['y']) * factor
                 w = start_frame['width'] + (end_frame['width'] - start_frame['width']) * factor
                 h = start_frame['height'] + (end_frame['height'] - start_frame['height']) * factor
                 
-                frame = base_clip.get_frame(0)
-                cropped = frame[int(y):int(y+h), int(x):int(x+w)]
-                resized = resize(cropped, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 3), preserve_range=True)
-                return resized.astype(np.uint8)
+                # Получаем базовый кадр
+                base_frame = base_clip.get_frame(0)
+                cropped = base_frame[int(y):int(y+h), int(x):int(x+w)]
+                base_resized = resize(cropped, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 3), preserve_range=True)
+                
+                # Получаем кадр наложения
+                overlay_frame = overlay_clip.get_frame(t % overlay_clip.duration)
+                overlay_resized = resize(overlay_frame, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), preserve_range=True)
+                
+                # Разделяем RGB и альфа-канал
+                overlay_rgb = overlay_resized[..., :3]
+                overlay_alpha = overlay_resized[..., 3:] / 255.0
+                
+                # Применяем смешивание с учетом прозрачности
+                blended = soft_light_blend(base_resized.astype(np.uint8), overlay_rgb.astype(np.uint8))
+                final = base_resized * (1 - overlay_alpha) + blended * overlay_alpha
+                
+                return final.astype(np.uint8)
     
             video = VideoFileClip(image_path, audio=False).set_duration(Config.VIDEO_DURATION)
             video = video.fl(lambda gf, t: make_frame(t))
@@ -113,6 +128,7 @@ class VideoGeneratorApp:
         except Exception as e:
             logging.error(f"Error generating video: {e}")
             return jsonify({'success': False, 'message': str(e)})
+
 
 
 if __name__ == '__main__':
