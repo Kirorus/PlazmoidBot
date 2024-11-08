@@ -25,6 +25,7 @@ class Config:
     VIDEO_THREADS = 12
     
     # Monitoring Settings
+    MAX_VIDEO_PROCESSING_TIME = 300 # 5 минут
     MAX_WAIT_TIME = 300  # 5 минут
     MONITOR_SLEEP_INTERVAL = 2
     CLEANUP_DELAY = 2

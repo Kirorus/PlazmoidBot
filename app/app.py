@@ -20,19 +20,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-@contextmanager
-def timeout(seconds):
-    def timeout_handler(signum, frame):
-        raise TimeoutError(f"Operation timed out after {seconds} seconds")
-
-    original_handler = signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(seconds)
-    
-    try:
-        yield
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, original_handler)
+# @contextmanager
+# def timeout(seconds):
+#     def timeout_handler(signum, frame):
+#         raise TimeoutError(f"Operation timed out after {seconds} seconds")
+# 
+#     original_handler = signal.signal(signal.SIGALRM, timeout_handler)
+#     signal.alarm(seconds)
+#     
+#     try:
+#         yield
+#     finally:
+#         signal.alarm(0)
+#         signal.signal(signal.SIGALRM, original_handler)
 
 def check_ffmpeg_version():
     try:
@@ -72,6 +72,22 @@ class VideoGeneratorApp:
             'overlay1': np.zeros((Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), dtype=np.uint8),
             'overlay2': np.zeros((Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), dtype=np.uint8)
         }
+
+
+    @contextmanager
+    def timeout_threading(self, seconds):
+        """Контекстный менеджер для таймаута, работающий в любом потоке"""
+        timeout_event = Event()
+        timer = Timer(seconds, timeout_event.set)
+        timer.start()
+        
+        try:
+            yield timeout_event
+        finally:
+            timer.cancel()
+
+
+
 
     @contextmanager
     def create_clips(self, image_path):
@@ -236,22 +252,32 @@ class VideoGeneratorApp:
                     self.update_task_status(chat_id, task_id, 'processing', progress)
                     return self.make_frame(t, clips, start_frame, end_frame)
 
-                with timeout(Config.MAX_VIDEO_PROCESSING_TIME):
+                # Используем timeout_threading вместо timeout
+                with self.timeout_threading(Config.MAX_VIDEO_PROCESSING_TIME) as timeout_event:
                     video = VideoFileClip(image_path, audio=False).set_duration(Config.VIDEO_DURATION)
                     video = video.fl(lambda gf, t: frame_generator(t))
 
                     temp_video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_temp.mp4")
                     try:
-                        video.write_videofile(
-                            temp_video_path,
-                            fps=Config.VIDEO_FPS,
-                            codec=Config.VIDEO_CODEC,
-                            audio=False,
-                            preset=Config.VIDEO_PRESET,
-                            threads=Config.VIDEO_THREADS
-                        )
+                        # Периодически проверяем таймаут во время обработки
+                        def write_video_with_timeout_check():
+                            video.write_videofile(
+                                temp_video_path,
+                                fps=Config.VIDEO_FPS,
+                                codec=Config.VIDEO_CODEC,
+                                audio=False,
+                                preset=Config.VIDEO_PRESET,
+                                threads=Config.VIDEO_THREADS
+                            )
+                            if timeout_event.is_set():
+                                raise TimeoutError("Video processing timed out")
+
+                        write_video_with_timeout_check()
                     finally:
                         video.close()
+
+                    if timeout_event.is_set():
+                        raise TimeoutError("Video processing timed out")
 
                     if os.path.exists(temp_video_path) and os.path.getsize(temp_video_path) > 0:
                         final_video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_video.mp4")
