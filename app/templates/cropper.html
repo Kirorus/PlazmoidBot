@@ -256,6 +256,86 @@
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
 
+
+
+        .saturation-container {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background-color: #f5f5f5;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .saturation-slider {
+            flex-grow: 1;
+            height: 8px;
+            -webkit-appearance: none;
+            background: linear-gradient(to right, #666666, #ffffff);
+            border-radius: 4px;
+            outline: none;
+        }
+
+        .saturation-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #2196F3;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: transform 0.2s ease;
+        }
+
+        .saturation-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+        }
+
+        .saturation-slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #2196F3;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: transform 0.2s ease;
+        }
+
+        .saturation-slider::-moz-range-thumb:hover {
+            transform: scale(1.1);
+        }
+
+        .saturation-value {
+            min-width: 50px;
+            text-align: center;
+            color: #333;
+            font-weight: 500;
+            background: #ffffff;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .preview-container {
+            margin-top: 1rem;
+            padding: 1rem;
+            background-color: #f5f5f5;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .preview-image {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+
+
+
+
         .toast.success {
             background-color: #4CAF50;
         }
@@ -312,6 +392,19 @@
         </div>
 
         <div class="controls-container">
+            <!-- Добавляем контейнер для насыщенности -->
+            <div class="saturation-container">
+                <label for="saturation">Saturation:</label>
+                <input type="range" id="saturation" 
+                       min="-100" max="100" value="-10" 
+                       class="saturation-slider">
+                <span class="saturation-value">-10</span>
+            </div>
+
+            <div class="preview-container">
+                <canvas id="previewCanvas"></canvas>
+            </div>
+
             <div class="button-container">
                 <button id="set-start-frame">
                     <span>Set Start Frame</span>
@@ -337,7 +430,6 @@
 
             <div class="tasks-list" id="tasksList" style="display: none;">
                 <div class="tasks-header">Recent Tasks</div>
-                <!-- Tasks will be added here dynamically -->
             </div>
         </div>
     </div>
@@ -360,6 +452,53 @@
             const tasksList = document.getElementById('tasksList');
             let globalEventSource = null;
 
+            const saturationSlider = document.getElementById('saturation');
+            const saturationValue = document.querySelector('.saturation-value');
+            const previewCanvas = document.createElement('canvas');
+            const previewCtx = previewCanvas.getContext('2d');
+
+            let currentSaturation = -10;
+
+            function applySaturation(imageData, saturationValue) {
+                const data = imageData.data;
+                const adjustment = (saturationValue + 100) / 100;
+
+                for (let i = 0; i < data.length; i += 4) {
+                    const r = data[i];
+                    const g = data[i + 1];
+                    const b = data[i + 2];
+
+                    const gray = 0.2989 * r + 0.5870 * g + 0.1140 * b;
+
+                    data[i] = gray + (r - gray) * adjustment;
+                    data[i + 1] = gray + (g - gray) * adjustment;
+                    data[i + 2] = gray + (b - gray) * adjustment;
+                }
+
+                return imageData;
+            }
+
+            function updatePreview() {
+                const cropData = cropper.getCropBoxData();
+                const imageData = cropper.getCroppedCanvas().getContext('2d').getImageData(
+                    0, 0, 
+                    cropData.width, 
+                    cropData.height
+                );
+
+                previewCanvas.width = cropData.width;
+                previewCanvas.height = cropData.height;
+
+                const adjustedImageData = applySaturation(imageData, currentSaturation);
+                previewCtx.putImageData(adjustedImageData, 0, 0);
+            }
+
+            saturationSlider.addEventListener('input', function() {
+                currentSaturation = parseInt(this.value);
+                saturationValue.textContent = this.value;
+                updatePreview();
+            });
+
             const cropper = new Cropper(imageElement, {
                 aspectRatio: 3/4,
                 viewMode: 1,
@@ -373,7 +512,11 @@
                 cropBoxMovable: true,
                 cropBoxResizable: true,
                 toggleDragModeOnDblclick: false,
+                crop: function() {
+                    updatePreview();
+                }
             });
+
 
             let startFrame = null;
             let endFrame = null;
@@ -527,7 +670,8 @@
                             startFrame: startFrame,
                             endFrame: endFrame,
                             chat_id: "{{ chat_id }}",
-                            task_id: "{{ task_id }}"
+                            task_id: "{{ task_id }}",
+                            saturation: currentSaturation
                         })
                     });
 
@@ -543,6 +687,7 @@
                     resetUI();
                 }
             });
+
 
             window.addEventListener('beforeunload', () => {
                 if (globalEventSource) {
