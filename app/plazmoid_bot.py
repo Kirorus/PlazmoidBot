@@ -33,6 +33,7 @@ class TaskStatus(Enum):
 class Task:
     status: TaskStatus
     start_time: float
+    message_id: Optional[int] = None
 
 def run_flask():
     app_instance = VideoGeneratorApp()
@@ -126,7 +127,8 @@ class ImageBot:
     async def handle_image(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.message.from_user.id
         chat_id = update.message.chat_id
-
+        message_id = update.message.message_id  # Получаем message_id
+    
         if self.user_states.get(user_id) == 'awaiting_image':
             try:
                 task_id = str(uuid.uuid4())
@@ -136,7 +138,8 @@ class ImageBot:
                 
                 self.user_tasks[chat_id][task_id] = Task(
                     status=TaskStatus.PENDING,
-                    start_time=time.time()
+                    start_time=time.time(),
+                    message_id=message_id  # Сохраняем message_id
                 )
 
                 photo = update.message.photo[-1]
@@ -182,11 +185,11 @@ class ImageBot:
         if task and task.status == TaskStatus.COMPLETED:
             logger.info(f"Video for task {task_id} already sent, skipping")
             return True
-
+    
         try:
             file_size = os.path.getsize(video_path)
             MAX_VIDEO_SIZE = 50 * 1024 * 1024
-
+    
             if file_size <= MAX_VIDEO_SIZE:
                 try:
                     with open(video_path, 'rb') as video_file:
@@ -195,30 +198,31 @@ class ImageBot:
                             video=video_file,
                             caption="✨ Видео готово! 🎉",
                             filename=f"plasma_effect_{task_id[:8]}.mp4",
-                            supports_streaming=True
+                            supports_streaming=True,
+                            reply_to_message_id=task.message_id  # Добавляем это
                         )
                     logger.info(f"Sent as video message for task {task_id}")
-                    # Очистка старых задач после успешной отправки
                     self.cleanup_old_tasks(chat_id)
                     return True
                 except Exception as e:
                     logger.warning(f"Failed to send as video, trying as document: {e}")
-
+    
             with open(video_path, 'rb') as video_file:
                 await self.application.bot.send_document(
                     chat_id=chat_id,
                     document=video_file,
                     caption="✨ Видео готово! 🎉\nФайл отправлен как документ из-за большого размера.",
-                    filename=f"plasma_effect_{task_id[:8]}.mp4"
+                    filename=f"plasma_effect_{task_id[:8]}.mp4",
+                    reply_to_message_id=task.message_id  # Добавляем это
                 )
             logger.info(f"Sent as document for task {task_id}")
-            # Очистка старых задач после успешной отправки
             self.cleanup_old_tasks(chat_id)
             return True
-
+    
         except Exception as e:
             logger.error(f"Error sending video/document: {e}")
             return False
+    
 
     async def create_monitoring_task(self, chat_id: int):
         if chat_id not in self.monitoring_tasks:
@@ -230,27 +234,26 @@ class ImageBot:
             logger.info(f"Starting monitor for chat_id: {chat_id}")
             
             while self._has_active_tasks(chat_id):
-                # Очистка старых задач при каждой итерации мониторинга
                 self.cleanup_old_tasks(chat_id)
                 
                 if chat_id not in self.user_tasks or not self.user_tasks[chat_id]:
                     logger.info(f"No tasks found for chat_id: {chat_id}")
                     break
-
+    
                 tasks_to_monitor = {
                     task_id: task 
                     for task_id, task in self.user_tasks[chat_id].items()
                     if task.status == TaskStatus.PENDING
                 }
-
+    
                 if not tasks_to_monitor:
                     logger.info(f"No pending tasks for chat_id: {chat_id}")
                     break
-
+    
                 for task_id, task in tasks_to_monitor.items():
                     video_path = os.path.join(self.upload_folder, f"{chat_id}_{task_id}_video.mp4")
                     done_flag_path = os.path.join(self.upload_folder, f"{chat_id}_{task_id}_video_done.txt")
-
+    
                     if os.path.exists(video_path) and os.path.exists(done_flag_path):
                         try:
                             if await self.send_video_to_user(chat_id, video_path, task_id):
@@ -271,11 +274,12 @@ class ImageBot:
                         task.status = TaskStatus.TIMEOUT
                         await self.send_timeout_message(chat_id, task_id)
                         await self.cleanup_task_files(chat_id, task_id)
-
+    
                 await asyncio.sleep(5)
         finally:
             self.monitoring_tasks.discard(chat_id)
             await self.cleanup_task_files(chat_id)
+    
 
     def cleanup_old_tasks(self, chat_id: int, max_tasks: int = 10):
         """
