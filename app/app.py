@@ -53,24 +53,31 @@ class VideoGeneratorApp:
             chat_id = data['chat_id']
     
             image_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_image.jpg")
-            overlay_path = os.path.join(os.path.dirname(self.UPLOAD_FOLDER), 'SIDE_ADDONS_shurehi_1.mov')
+            overlay_path_1 = os.path.join(os.path.dirname(self.UPLOAD_FOLDER), 'SIDE_ADDONS_shurehi_1.mov')
+            overlay_path_2 = os.path.join(os.path.dirname(self.UPLOAD_FOLDER), 'SIDE_ADDONS_shurehi_2.mov')
             video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_video.mp4")
     
             base_clip = ImageClip(image_path)
-            overlay_clip = VideoFileClip(overlay_path)
+            overlay_clip_1 = VideoFileClip(overlay_path_1)
+            overlay_clip_2 = VideoFileClip(overlay_path_2)
     
             def soft_light_blend(base, overlay):
-                # Нормализация значений до диапазона [0, 1]
                 base = base.astype(float) / 255
                 overlay = overlay.astype(float) / 255
     
-                # Применение формулы смешивания Soft Light
                 mask = base <= 0.5
                 result = np.zeros_like(base)
                 result[mask] = 2 * base[mask] * overlay[mask] + base[mask]**2 * (1 - 2 * overlay[mask])
                 result[~mask] = 2 * base[~mask] * (1 - overlay[~mask]) + np.sqrt(base[~mask]) * (2 * overlay[~mask] - 1)
     
-                # Возвращаем значения в диапазон [0, 255]
+                return np.clip(result * 255, 0, 255).astype(np.uint8)
+    
+            def screen_blend(base, overlay):
+                # Формула для режима Screen: 1 - (1 - a) * (1 - b)
+                base = base.astype(float) / 255
+                overlay = overlay.astype(float) / 255
+                
+                result = 1 - (1 - base) * (1 - overlay)
                 return np.clip(result * 255, 0, 255).astype(np.uint8)
     
             def make_frame(t):
@@ -93,17 +100,28 @@ class VideoGeneratorApp:
                 cropped = base_frame[int(y):int(y+h), int(x):int(x+w)]
                 base_resized = resize(cropped, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 3), preserve_range=True)
                 
-                # Получаем кадр наложения
-                overlay_frame = overlay_clip.get_frame(t % overlay_clip.duration)
-                overlay_resized = resize(overlay_frame, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), preserve_range=True)
+                # Получаем первый оверлей (Soft Light)
+                overlay_frame_1 = overlay_clip_1.get_frame(t % overlay_clip_1.duration)
+                overlay_resized_1 = resize(overlay_frame_1, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), preserve_range=True)
                 
-                # Разделяем RGB и альфа-канал
-                overlay_rgb = overlay_resized[..., :3]
-                overlay_alpha = overlay_resized[..., 3:] / 255.0
+                # Получаем второй оверлей (Screen)
+                overlay_frame_2 = overlay_clip_2.get_frame(t % overlay_clip_2.duration)
+                overlay_resized_2 = resize(overlay_frame_2, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), preserve_range=True)
                 
-                # Применяем смешивание с учетом прозрачности
-                blended = soft_light_blend(base_resized.astype(np.uint8), overlay_rgb.astype(np.uint8))
-                final = base_resized * (1 - overlay_alpha) + blended * overlay_alpha
+                # Разделяем RGB и альфа-каналы для обоих оверлеев
+                overlay_rgb_1 = overlay_resized_1[..., :3]
+                overlay_alpha_1 = overlay_resized_1[..., 3:] / 255.0
+                
+                overlay_rgb_2 = overlay_resized_2[..., :3]
+                overlay_alpha_2 = overlay_resized_2[..., 3:] / 255.0
+                
+                # Применяем первый оверлей (Soft Light)
+                blended_1 = soft_light_blend(base_resized.astype(np.uint8), overlay_rgb_1.astype(np.uint8))
+                intermediate = base_resized * (1 - overlay_alpha_1) + blended_1 * overlay_alpha_1
+                
+                # Применяем второй оверлей (Screen)
+                blended_2 = screen_blend(intermediate.astype(np.uint8), overlay_rgb_2.astype(np.uint8))
+                final = intermediate * (1 - overlay_alpha_2) + blended_2 * overlay_alpha_2
                 
                 return final.astype(np.uint8)
     
@@ -128,6 +146,7 @@ class VideoGeneratorApp:
         except Exception as e:
             logging.error(f"Error generating video: {e}")
             return jsonify({'success': False, 'message': str(e)})
+    
 
 
 

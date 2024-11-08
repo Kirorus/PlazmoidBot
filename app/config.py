@@ -29,8 +29,8 @@ class Config:
     VIDEO_HEIGHT = 1024
     
     # Monitoring Settings
-    MAX_WAIT_TIME = 300  # seconds
-    MONITOR_SLEEP_INTERVAL = 1  # seconds
+    MAX_WAIT_TIME = 500  # seconds
+    MONITOR_SLEEP_INTERVAL = 2  # seconds
     
     # Logging
     LOGGING_LEVEL = "DEBUG"
