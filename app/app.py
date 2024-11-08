@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
 from contextlib import contextmanager
-import signal
+from threading import Timer, Event, Lock
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -47,6 +47,7 @@ class VideoGeneratorApp:
     def __init__(self):
         self.app = Flask(__name__)
         self.UPLOAD_FOLDER = Config.UPLOAD_FOLDER
+        self.user_tasks_lock = Lock()
         os.makedirs(self.UPLOAD_FOLDER, exist_ok=True)
         
         check_ffmpeg_version()
@@ -61,18 +62,6 @@ class VideoGeneratorApp:
         self.user_tasks = {}
         self.executor = ThreadPoolExecutor(max_workers=10)
         self.setup_routes()
-
-        # Инициализация буферов для обработки кадров
-        self._initialize_frame_buffers()
-
-    def _initialize_frame_buffers(self):
-        """Инициализация буферов для обработки кадров"""
-        self._frame_buffers = {
-            'base': np.zeros((Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 3), dtype=np.uint8),
-            'overlay1': np.zeros((Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), dtype=np.uint8),
-            'overlay2': np.zeros((Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), dtype=np.uint8)
-        }
-
 
     @contextmanager
     def timeout_threading(self, seconds):
@@ -201,30 +190,34 @@ class VideoGeneratorApp:
                 factor = t / half_duration
             else:
                 factor = 2.0 - (t / half_duration)
-
+    
             factor = -(math.cos(math.pi * factor) - 1) / 2
-
+    
             x = start_frame['x'] + (end_frame['x'] - start_frame['x']) * factor
             y = start_frame['y'] + (end_frame['y'] - start_frame['y']) * factor
             w = start_frame['width'] + (end_frame['width'] - start_frame['width']) * factor
             h = start_frame['height'] + (end_frame['height'] - start_frame['height']) * factor
-
+    
             base_frame = clips['base'].get_frame(0)
             cropped = base_frame[int(y):int(y+h), int(x):int(x+w)]
-
-            # Используем предварительно созданные буферы
+    
+            # Изменяем способ использования resize
             base_resized = resize(cropped, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 3),
-                                preserve_range=True, anti_aliasing=True, mode='reflect',
-                                out=self._frame_buffers['base'])
-
+                                preserve_range=True, anti_aliasing=True, mode='reflect')
+    
             overlay_frame_1 = clips['soft_light'].get_frame(t % clips['soft_light'].duration)
             overlay_resized_1 = resize(overlay_frame_1, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4),
-                                     preserve_range=True, out=self._frame_buffers['overlay1'])
-
+                                     preserve_range=True)
+    
             overlay_frame_2 = clips['screen'].get_frame(t % clips['screen'].duration)
             overlay_resized_2 = resize(overlay_frame_2, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4),
-                                     preserve_range=True, out=self._frame_buffers['overlay2'])
-
+                                     preserve_range=True)
+    
+            # Преобразуем в uint8 сразу после resize
+            base_resized = base_resized.astype(np.uint8)
+            overlay_resized_1 = overlay_resized_1.astype(np.uint8)
+            overlay_resized_2 = overlay_resized_2.astype(np.uint8)
+    
             overlay_rgb_1 = overlay_resized_1[..., :3]
             overlay_alpha_1 = overlay_resized_1[..., 3:] / 255.0
             overlay_alpha_1 = np.clip(overlay_alpha_1 * 1.1, 0, 1)
@@ -232,21 +225,24 @@ class VideoGeneratorApp:
             overlay_rgb_2 = overlay_resized_2[..., :3]
             overlay_alpha_2 = overlay_resized_2[..., 3:] / 255.0
             overlay_alpha_2 = np.clip(overlay_alpha_2 * 1.5, 0, 1)
-
+    
             blended_1 = self.soft_light_blend(base_resized, overlay_rgb_1)
             intermediate_1 = base_resized * (1 - overlay_alpha_1) + blended_1 * overlay_alpha_1
             
-            blended_2 = self.screen_blend(intermediate_1, overlay_rgb_2)
+            blended_2 = self.screen_blend(intermediate_1.astype(np.uint8), overlay_rgb_2)
             final = intermediate_1 * (1 - overlay_alpha_2) + blended_2 * overlay_alpha_2
-
+    
             return final.astype(np.uint8)
         except Exception as e:
             logger.error(f"Error in make_frame: {e}")
             raise
+    
 
     def process_video(self, chat_id, task_id, image_path, start_frame, end_frame):
         try:
-            with self.create_clips(image_path) as clips:
+            with self.create_clips(image_path) as clips, \
+                 VideoFileClip(image_path, audio=False) as video:
+                video = video.set_duration(Config.VIDEO_DURATION)
                 def frame_generator(t):
                     progress = int((t / Config.VIDEO_DURATION) * 100)
                     self.update_task_status(chat_id, task_id, 'processing', progress)
@@ -298,12 +294,12 @@ class VideoGeneratorApp:
             raise
 
     def update_task_status(self, chat_id, task_id, status, progress):
-        """Обновление статуса задачи"""
-        if chat_id in self.user_tasks:
-            self.user_tasks[chat_id][task_id].update({
-                'status': status,
-                'progress': progress
-            })
+        with self.user_tasks_lock:
+            if chat_id in self.user_tasks:
+                self.user_tasks[chat_id][task_id].update({
+                    'status': status,
+                    'progress': progress
+                })
 
     def create_completion_flag(self, chat_id, task_id):
         """Создание флага завершения задачи"""
@@ -312,16 +308,21 @@ class VideoGeneratorApp:
             f.write('done')
 
     def cleanup_old_files(self):
-        """Очистка старых временных файлов"""
+        with self.user_tasks_lock:
+            active_files = set()
+            for chat_tasks in self.user_tasks.values():
+                for task_id in chat_tasks:
+                    active_files.add(f"{task_id}_*")
+                    
         current_time = time.time()
         for filename in os.listdir(self.UPLOAD_FOLDER):
-            file_path = os.path.join(self.UPLOAD_FOLDER, filename)
-            if current_time - os.path.getctime(file_path) > Config.MAX_FILE_AGE:
-                try:
-                    os.remove(file_path)
-                    logger.debug(f"Removed old file: {filename}")
-                except Exception as e:
-                    logger.error(f"Error removing file {filename}: {e}")
+            if not any(filename.startswith(pattern) for pattern in active_files):
+                file_path = os.path.join(self.UPLOAD_FOLDER, filename)
+                if current_time - os.path.getctime(file_path) > Config.MAX_FILE_AGE:
+                    try:
+                        os.remove(file_path)
+                    except Exception as e:
+                        logger.error(f"Error removing file {filename}: {e}")
 
     def generate_video(self):
         chat_id = None
