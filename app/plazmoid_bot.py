@@ -336,7 +336,7 @@ class ImageBot:
                 text="У вас пока нет активных задач."
             )
             return
-
+    
         tasks_text = "📋 Ваши задачи:\n\n"
         for task_id, task in self.user_tasks[chat_id].items():
             status_emoji = {
@@ -346,6 +346,12 @@ class ImageBot:
                 TaskStatus.TIMEOUT: '⏰'
             }.get(task.status, '❓')
             tasks_text += f"{status_emoji} Задача #{task_id[:8]}: {task.status.value}\n"
+    
+        await self.application.bot.send_message(
+            chat_id=chat_id,
+            text=tasks_text
+        )
+    
 
         
 
