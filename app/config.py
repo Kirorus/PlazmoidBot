@@ -10,8 +10,9 @@ class Config:
     BASE_WEBAPP_URL = os.getenv('BASE_WEBAPP_URL')
 
     # Paths
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    UPLOAD_FOLDER = os.path.join(BASE_DIR, 'app', 'static', 'uploads')
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    UPLOAD_FOLDER = os.path.join(BASE_DIR, 'static', 'uploads')
+    
 
     # Flask Settings
     FLASK_DEBUG = True
@@ -34,8 +35,7 @@ class Config:
 
     MAX_ACTIVE_TASKS = 8
     MAX_QUEUE_SIZE = 10
-    MAX_FILE_AGE = 3600  # 1 часMAX_VIDEO_PROCESSING_TIME = 300  # 5 минут
-
+    MAX_FILE_AGE = 3600  # 1 час
     # Output Video Dimensions
     VIDEO_WIDTH = 768
     VIDEO_HEIGHT = 1024
