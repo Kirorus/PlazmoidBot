@@ -40,7 +40,14 @@ def run_flask():
 
 class ImageBot:
     def __init__(self, token: str):
-        self.application = ApplicationBuilder().token(token).build()
+        try:
+            if not token:
+                raise ValueError("Bot token is not provided")
+            self.application = ApplicationBuilder().token(token).build()
+        except Exception as e:
+            logger.critical(f"Failed to initialize bot: {e}")
+            raise
+    
         self.upload_folder = Config.UPLOAD_FOLDER
         self.base_webapp_url = Config.BASE_WEBAPP_URL
         self._ensure_upload_folder()
