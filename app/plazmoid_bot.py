@@ -127,26 +127,34 @@ class ImageBot:
     async def handle_image(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.message.from_user.id
         chat_id = update.message.chat_id
-        message_id = update.message.message_id  # Получаем message_id
+        message_id = update.message.message_id
     
         if self.user_states.get(user_id) == 'awaiting_image':
             try:
                 task_id = str(uuid.uuid4())
-                
+    
                 if chat_id not in self.user_tasks:
                     self.user_tasks[chat_id] = {}
-                
+    
                 self.user_tasks[chat_id][task_id] = Task(
                     status=TaskStatus.PENDING,
                     start_time=time.time(),
-                    message_id=message_id  # Сохраняем message_id
+                    message_id=message_id
                 )
-
-                photo = update.message.photo[-1]
-                file = await photo.get_file()
+    
+                if update.message.photo:
+                    photo = update.message.photo[-1]
+                    file = await photo.get_file()
+                elif update.message.document and update.message.document.mime_type.startswith('image/'):
+                    file = await update.message.document.get_file()
+                else:
+                    await update.message.reply_text(
+                        "Пожалуйста, отправьте изображение в виде фото или документа."
+                    )
+                    return
+    
                 file_path = os.path.join(self.upload_folder, f"{chat_id}_{task_id}_image.jpg")
                 await file.download_to_drive(file_path)
-
                 await self.create_monitoring_task(chat_id)
 
                 keyboard = [[
@@ -403,6 +411,7 @@ class ImageBot:
         ]
         for handler in handlers:
             self.application.add_handler(handler)
+            self.application.add_handler(MessageHandler(filters.Document.IMAGE, self.handle_image))
 
     def run(self):
         """Запуск бота"""
