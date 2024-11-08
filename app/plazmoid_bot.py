@@ -229,7 +229,7 @@ class ImageBot:
         try:
             logger.info(f"Starting monitor for chat_id: {chat_id}")
             
-            while True:
+            while self._has_active_tasks(chat_id):
                 # Очистка старых задач при каждой итерации мониторинга
                 self.cleanup_old_tasks(chat_id)
                 
@@ -275,6 +275,7 @@ class ImageBot:
                 await asyncio.sleep(5)
         finally:
             self.monitoring_tasks.discard(chat_id)
+            await self.cleanup_task_files(chat_id)
 
     def cleanup_old_tasks(self, chat_id: int, max_tasks: int = 10):
         """
