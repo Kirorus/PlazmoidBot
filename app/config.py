@@ -17,13 +17,21 @@ class Config:
     FLASK_DEBUG = True
     
     # Video Generation Settings
-    VIDEO_DURATION = 24
+    VIDEO_DURATION = 2
     VIDEO_PING_PONG = True
     VIDEO_FPS = 25
     VIDEO_CODEC = 'libx264'
     VIDEO_PRESET = 'ultrafast'
-    VIDEO_THREADS = 4
+    VIDEO_THREADS = 12
     
+    # Monitoring Settings
+    MAX_WAIT_TIME = 300  # 5 минут
+    MONITOR_SLEEP_INTERVAL = 2
+    CLEANUP_DELAY = 2
+    VIDEO_CHECK_RETRIES = 3
+    VIDEO_CHECK_DELAY = 1
+
+
     # Output Video Dimensions
     VIDEO_WIDTH = 768
     VIDEO_HEIGHT = 1024
