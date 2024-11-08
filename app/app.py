@@ -10,6 +10,8 @@ from .config import Config
 import time
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
+from contextlib import contextmanager
+import signal
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -17,6 +19,20 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
+@contextmanager
+def timeout(seconds):
+    def timeout_handler(signum, frame):
+        raise TimeoutError(f"Operation timed out after {seconds} seconds")
+
+    original_handler = signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(seconds)
+    
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, original_handler)
 
 def check_ffmpeg_version():
     try:
@@ -33,22 +49,47 @@ class VideoGeneratorApp:
         self.UPLOAD_FOLDER = Config.UPLOAD_FOLDER
         os.makedirs(self.UPLOAD_FOLDER, exist_ok=True)
         
-        # Проверка FFMPEG
         check_ffmpeg_version()
         
-        # Пути к оверлеям
         self.overlay_paths = {
             'soft_light': os.path.join(os.path.dirname(self.UPLOAD_FOLDER), 'SIDE_ADDONS_shurehi_soft_light.mov'),
             'screen': os.path.join(os.path.dirname(self.UPLOAD_FOLDER), 'SIDE_ADDONS_shurehi_screen.mov')
         }
         
-        # Проверка наличия файлов при запуске
         self._check_overlay_files()
         
-        # Инициализация компонентов
         self.user_tasks = {}
         self.executor = ThreadPoolExecutor(max_workers=10)
         self.setup_routes()
+
+        # Инициализация буферов для обработки кадров
+        self._initialize_frame_buffers()
+
+    def _initialize_frame_buffers(self):
+        """Инициализация буферов для обработки кадров"""
+        self._frame_buffers = {
+            'base': np.zeros((Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 3), dtype=np.uint8),
+            'overlay1': np.zeros((Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), dtype=np.uint8),
+            'overlay2': np.zeros((Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), dtype=np.uint8)
+        }
+
+    @contextmanager
+    def create_clips(self, image_path):
+        """Контекстный менеджер для безопасной работы с видео клипами"""
+        clips = {}
+        try:
+            clips['soft_light'] = VideoFileClip(self.overlay_paths['soft_light'])
+            clips['screen'] = VideoFileClip(self.overlay_paths['screen'])
+            clips['base'] = ImageClip(image_path)
+            yield clips
+        finally:
+            for name, clip in clips.items():
+                try:
+                    if clip is not None:
+                        clip.close()
+                        logger.debug(f"Closed clip: {name}")
+                except Exception as e:
+                    logger.error(f"Error closing clip {name}: {e}")
 
     def _check_overlay_files(self):
         """Проверка наличия и доступности файлов оверлеев"""
@@ -80,7 +121,6 @@ class VideoGeneratorApp:
             return jsonify({'error': 'Internal server error'}), 500
 
     def get_user_tasks(self, chat_id):
-        """Получение статуса всех задач пользователя"""
         tasks = self.user_tasks.get(chat_id, {})
         return jsonify({
             'tasks': [
@@ -138,7 +178,7 @@ class VideoGeneratorApp:
         result = result * 1.3
         return np.clip(result * 255, 0, 255).astype(np.uint8)
 
-    def make_frame(self, t, base_clip, overlay_clip_1, overlay_clip_2, start_frame, end_frame):
+    def make_frame(self, t, clips, start_frame, end_frame):
         try:
             half_duration = Config.VIDEO_DURATION / 2
             if t <= half_duration:
@@ -153,19 +193,21 @@ class VideoGeneratorApp:
             w = start_frame['width'] + (end_frame['width'] - start_frame['width']) * factor
             h = start_frame['height'] + (end_frame['height'] - start_frame['height']) * factor
 
-            base_frame = base_clip.get_frame(0)
+            base_frame = clips['base'].get_frame(0)
             cropped = base_frame[int(y):int(y+h), int(x):int(x+w)]
 
+            # Используем предварительно созданные буферы
             base_resized = resize(cropped, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 3),
-                                preserve_range=True, anti_aliasing=True, mode='reflect')
+                                preserve_range=True, anti_aliasing=True, mode='reflect',
+                                out=self._frame_buffers['base'])
 
-            overlay_frame_1 = overlay_clip_1.get_frame(t % overlay_clip_1.duration)
-            overlay_resized_1 = resize(overlay_frame_1, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), 
-                                     preserve_range=True)
+            overlay_frame_1 = clips['soft_light'].get_frame(t % clips['soft_light'].duration)
+            overlay_resized_1 = resize(overlay_frame_1, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4),
+                                     preserve_range=True, out=self._frame_buffers['overlay1'])
 
-            overlay_frame_2 = overlay_clip_2.get_frame(t % overlay_clip_2.duration)
-            overlay_resized_2 = resize(overlay_frame_2, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4), 
-                                     preserve_range=True)
+            overlay_frame_2 = clips['screen'].get_frame(t % clips['screen'].duration)
+            overlay_resized_2 = resize(overlay_frame_2, (Config.VIDEO_HEIGHT, Config.VIDEO_WIDTH, 4),
+                                     preserve_range=True, out=self._frame_buffers['overlay2'])
 
             overlay_rgb_1 = overlay_resized_1[..., :3]
             overlay_alpha_1 = overlay_resized_1[..., 3:] / 255.0
@@ -175,16 +217,85 @@ class VideoGeneratorApp:
             overlay_alpha_2 = overlay_resized_2[..., 3:] / 255.0
             overlay_alpha_2 = np.clip(overlay_alpha_2 * 1.5, 0, 1)
 
-            blended_1 = self.soft_light_blend(base_resized.astype(np.uint8), overlay_rgb_1.astype(np.uint8))
+            blended_1 = self.soft_light_blend(base_resized, overlay_rgb_1)
             intermediate_1 = base_resized * (1 - overlay_alpha_1) + blended_1 * overlay_alpha_1
             
-            blended_2 = self.screen_blend(intermediate_1.astype(np.uint8), overlay_rgb_2.astype(np.uint8))
+            blended_2 = self.screen_blend(intermediate_1, overlay_rgb_2)
             final = intermediate_1 * (1 - overlay_alpha_2) + blended_2 * overlay_alpha_2
 
             return final.astype(np.uint8)
         except Exception as e:
             logger.error(f"Error in make_frame: {e}")
             raise
+
+    def process_video(self, chat_id, task_id, image_path, start_frame, end_frame):
+        try:
+            with self.create_clips(image_path) as clips:
+                def frame_generator(t):
+                    progress = int((t / Config.VIDEO_DURATION) * 100)
+                    self.update_task_status(chat_id, task_id, 'processing', progress)
+                    return self.make_frame(t, clips, start_frame, end_frame)
+
+                with timeout(Config.MAX_VIDEO_PROCESSING_TIME):
+                    video = VideoFileClip(image_path, audio=False).set_duration(Config.VIDEO_DURATION)
+                    video = video.fl(lambda gf, t: frame_generator(t))
+
+                    temp_video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_temp.mp4")
+                    try:
+                        video.write_videofile(
+                            temp_video_path,
+                            fps=Config.VIDEO_FPS,
+                            codec=Config.VIDEO_CODEC,
+                            audio=False,
+                            preset=Config.VIDEO_PRESET,
+                            threads=Config.VIDEO_THREADS
+                        )
+                    finally:
+                        video.close()
+
+                    if os.path.exists(temp_video_path) and os.path.getsize(temp_video_path) > 0:
+                        final_video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_video.mp4")
+                        os.rename(temp_video_path, final_video_path)
+                        self.create_completion_flag(chat_id, task_id)
+                        self.update_task_status(chat_id, task_id, 'completed', 100)
+                        logger.info(f"Video processing completed for task {task_id}")
+                    else:
+                        raise RuntimeError("Failed to create video file")
+
+        except TimeoutError:
+            logger.error(f"Video processing timed out for task {task_id}")
+            self.update_task_status(chat_id, task_id, 'timeout', 0)
+            raise
+        except Exception as e:
+            logger.error(f"Error in process_video for task {task_id}: {e}")
+            self.update_task_status(chat_id, task_id, 'error', 0)
+            raise
+
+    def update_task_status(self, chat_id, task_id, status, progress):
+        """Обновление статуса задачи"""
+        if chat_id in self.user_tasks:
+            self.user_tasks[chat_id][task_id].update({
+                'status': status,
+                'progress': progress
+            })
+
+    def create_completion_flag(self, chat_id, task_id):
+        """Создание флага завершения задачи"""
+        done_flag_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_video_done.txt")
+        with open(done_flag_path, 'w') as f:
+            f.write('done')
+
+    def cleanup_old_files(self):
+        """Очистка старых временных файлов"""
+        current_time = time.time()
+        for filename in os.listdir(self.UPLOAD_FOLDER):
+            file_path = os.path.join(self.UPLOAD_FOLDER, filename)
+            if current_time - os.path.getctime(file_path) > Config.MAX_FILE_AGE:
+                try:
+                    os.remove(file_path)
+                    logger.debug(f"Removed old file: {filename}")
+                except Exception as e:
+                    logger.error(f"Error removing file {filename}: {e}")
 
     def generate_video(self):
         chat_id = None
@@ -202,113 +313,46 @@ class VideoGeneratorApp:
             if not all([start_frame, end_frame, chat_id, task_id]):
                 raise ValueError("Missing required parameters")
 
-            # Проверяем количество активных задач пользователя
             active_tasks = sum(1 for task in self.user_tasks.get(chat_id, {}).values()
                              if task['status'] in ['pending', 'processing'])
                              
-            if active_tasks >= 8:  # Максимум 8 активных задач
+            if active_tasks >= Config.MAX_ACTIVE_TASKS:
                 raise ValueError("Too many active tasks. Please wait for some tasks to complete.")
 
-            # Проверяем, не достигнут ли лимит выполняющихся задач
-            if self.executor._work_queue.qsize() >= 10:
+            if self.executor._work_queue.qsize() >= Config.MAX_QUEUE_SIZE:
                 raise ValueError("Server is busy. Please wait a moment and try again.")
 
-            # Инициализация задачи
             if chat_id not in self.user_tasks:
                 self.user_tasks[chat_id] = {}
             
             self.user_tasks[chat_id][task_id] = {
-                'status': 'processing',
+                'status': 'pending',
                 'progress': 0,
                 'created_at': time.time()
             }
 
             image_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_image.jpg")
-            video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_video.mp4")
 
             if not os.path.exists(image_path):
                 raise FileNotFoundError(f"Image not found for chat_id: {chat_id}, task_id: {task_id}")
 
-            def process_video():
-                overlay_clips = {}
-                base_clip = None
-                try:
-                    logger.info(f"Starting video processing for task {task_id}")
-                    
-                    # Создаем новые экземпляры клипов для каждой задачи
-                    overlay_clips['soft_light'] = VideoFileClip(self.overlay_paths['soft_light'])
-                    overlay_clips['screen'] = VideoFileClip(self.overlay_paths['screen'])
-                    base_clip = ImageClip(image_path)
-                    
-                    def frame_generator(t):
-                        progress = int((t / Config.VIDEO_DURATION) * 100)
-                        self.user_tasks[chat_id][task_id]['progress'] = progress
-                        return self.make_frame(t, base_clip, 
-                                            overlay_clips['soft_light'], 
-                                            overlay_clips['screen'],
-                                            start_frame, end_frame)
-            
-                    video = VideoFileClip(image_path, audio=False).set_duration(Config.VIDEO_DURATION)
-                    video = video.fl(lambda gf, t: frame_generator(t))
-            
-                    # Сначала создаем временный файл
-                    temp_video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_temp.mp4")
-                    video.write_videofile(
-                        temp_video_path,
-                        fps=Config.VIDEO_FPS,
-                        codec=Config.VIDEO_CODEC,
-                        audio=False,
-                        preset=Config.VIDEO_PRESET,
-                        threads=Config.VIDEO_THREADS
-                    )
-            
-                    # Проверяем временный файл
-                    if os.path.exists(temp_video_path) and os.path.getsize(temp_video_path) > 0:
-                        # Переименовываем в финальный файл
-                        final_video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_video.mp4")
-                        os.rename(temp_video_path, final_video_path)
-                        
-                        # Создаем флаг завершения только после успешного создания видео
-                        done_flag_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_video_done.txt")
-                        with open(done_flag_path, 'w') as f:
-                            f.write('done')
-                        
-                        self.user_tasks[chat_id][task_id]['status'] = 'completed'
-                        self.user_tasks[chat_id][task_id]['progress'] = 100
-                        logger.info(f"Video processing completed for task {task_id}")
-                    else:
-                        raise RuntimeError("Failed to create video file")
-            
-                except Exception as e:
-                    logger.error(f"Error in process_video for chat_id {chat_id}, task_id {task_id}: {e}")
-                    self.user_tasks[chat_id][task_id]['status'] = 'error'
-                    raise
-                finally:
-                    # Закрываем все клипы
-                    try:
-                        if base_clip:
-                            base_clip.close()
-                        for clip in overlay_clips.values():
-                            clip.close()
-                    except Exception as e:
-                        logger.error(f"Error closing clips: {e}")
+            self.executor.submit(
+                self.process_video,
+                chat_id,
+                task_id,
+                image_path,
+                start_frame,
+                end_frame
+            )
 
-            
-
-            self.executor.submit(process_video)
             return jsonify({'success': True, 'message': 'Video generation started'})
 
         except Exception as e:
             logger.error(f"Error generating video: {e}")
             if chat_id and task_id:
-                if chat_id not in self.user_tasks:
-                    self.user_tasks[chat_id] = {}
-                self.user_tasks[chat_id][task_id] = {
-                    'status': 'error',
-                    'progress': 0,
-                    'created_at': time.time()
-                }
+                self.update_task_status(chat_id, task_id, 'error', 0)
             return jsonify({'success': False, 'message': str(e)})
+
 
 if __name__ == '__main__':
     app_instance = VideoGeneratorApp()

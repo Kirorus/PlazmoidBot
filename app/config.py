@@ -31,14 +31,15 @@ class Config:
     VIDEO_CHECK_RETRIES = 3
     VIDEO_CHECK_DELAY = 1
 
+    MAX_ACTIVE_TASKS = 8
+    MAX_QUEUE_SIZE = 10
+    MAX_FILE_AGE = 3600  # 1 часMAX_VIDEO_PROCESSING_TIME = 300  # 5 минут
 
     # Output Video Dimensions
     VIDEO_WIDTH = 768
     VIDEO_HEIGHT = 1024
     
-    # Monitoring Settings
-    MAX_WAIT_TIME = 500  # seconds
-    MONITOR_SLEEP_INTERVAL = 2  # seconds
+
     
     # Logging
     LOGGING_LEVEL = "DEBUG"
