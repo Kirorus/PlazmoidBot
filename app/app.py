@@ -238,60 +238,46 @@ class VideoGeneratorApp:
             raise
     
 
+    # Замените текущий метод process_video на:
     def process_video(self, chat_id, task_id, image_path, start_frame, end_frame):
         try:
-            with self.create_clips(image_path) as clips, \
-                 VideoFileClip(image_path, audio=False) as video:
-                video = video.set_duration(Config.VIDEO_DURATION)
+            with self.create_clips(image_path) as clips:
                 def frame_generator(t):
                     progress = int((t / Config.VIDEO_DURATION) * 100)
                     self.update_task_status(chat_id, task_id, 'processing', progress)
                     return self.make_frame(t, clips, start_frame, end_frame)
-
-                # Используем timeout_threading вместо timeout
-                with self.timeout_threading(Config.MAX_VIDEO_PROCESSING_TIME) as timeout_event:
+    
+                temp_video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_temp.mp4")
+                final_video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_video.mp4")
+    
+                try:
                     video = VideoFileClip(image_path, audio=False).set_duration(Config.VIDEO_DURATION)
                     video = video.fl(lambda gf, t: frame_generator(t))
-
-                    temp_video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_temp.mp4")
-                    try:
-                        # Периодически проверяем таймаут во время обработки
-                        def write_video_with_timeout_check():
-                            video.write_videofile(
-                                temp_video_path,
-                                fps=Config.VIDEO_FPS,
-                                codec=Config.VIDEO_CODEC,
-                                audio=False,
-                                preset=Config.VIDEO_PRESET,
-                                threads=Config.VIDEO_THREADS
-                            )
-                            if timeout_event.is_set():
-                                raise TimeoutError("Video processing timed out")
-
-                        write_video_with_timeout_check()
-                    finally:
+                    
+                    video.write_videofile(
+                        temp_video_path,
+                        fps=Config.VIDEO_FPS,
+                        codec=Config.VIDEO_CODEC,
+                        audio=False,
+                        preset=Config.VIDEO_PRESET,
+                        threads=Config.VIDEO_THREADS
+                    )
+                finally:
+                    if 'video' in locals():
                         video.close()
-
-                    if timeout_event.is_set():
-                        raise TimeoutError("Video processing timed out")
-
-                    if os.path.exists(temp_video_path) and os.path.getsize(temp_video_path) > 0:
-                        final_video_path = os.path.join(self.UPLOAD_FOLDER, f"{chat_id}_{task_id}_video.mp4")
-                        os.rename(temp_video_path, final_video_path)
-                        self.create_completion_flag(chat_id, task_id)
-                        self.update_task_status(chat_id, task_id, 'completed', 100)
-                        logger.info(f"Video processing completed for task {task_id}")
-                    else:
-                        raise RuntimeError("Failed to create video file")
-
-        except TimeoutError:
-            logger.error(f"Video processing timed out for task {task_id}")
-            self.update_task_status(chat_id, task_id, 'timeout', 0)
-            raise
+    
+                if os.path.exists(temp_video_path) and os.path.getsize(temp_video_path) > 0:
+                    os.rename(temp_video_path, final_video_path)
+                    self.create_completion_flag(chat_id, task_id)
+                    self.update_task_status(chat_id, task_id, 'completed', 100)
+                else:
+                    raise RuntimeError("Failed to create video file")
+    
         except Exception as e:
             logger.error(f"Error in process_video for task {task_id}: {e}")
             self.update_task_status(chat_id, task_id, 'error', 0)
             raise
+    
 
     def update_task_status(self, chat_id, task_id, status, progress):
         with self.user_tasks_lock:
