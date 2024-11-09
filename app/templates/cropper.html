@@ -130,6 +130,13 @@
             background-color: #90CAF9;
         }
 
+
+        #generate-video.active {
+            background-color: #2196F3;
+            color: white;}
+
+
+
         .progress-container {
             margin-top: 1.5rem;
             display: none;
@@ -320,11 +327,11 @@
         }
 
         .preview-container {
-            margin-top: 1rem;
+            margin: 1rem 0;
             padding: 1rem;
             background-color: #f5f5f5;
             border-radius: 8px;
-            display: none;
+            text-align: center;
         }
 
         .preview-image {
@@ -333,7 +340,35 @@
             border-radius: 4px;
         }
 
-
+        .preview-container {
+            margin: 1rem 0;
+            padding: 1rem;
+            background-color: #f5f5f5;
+            border-radius: 8px;
+        }
+        
+        .preview-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 0.5rem;
+        }
+        
+        .preview-wrapper {
+            max-height: 200px;
+            overflow: hidden;
+            border-radius: 4px;
+            background-color: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        #previewCanvas {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            background-color: #fff;
+        }
+        
 
 
         .toast.success {
@@ -401,10 +436,6 @@
                 <span class="saturation-value">-10</span>
             </div>
 
-            <div class="preview-container">
-                <canvas id="previewCanvas"></canvas>
-            </div>
-
             <div class="button-container">
                 <button id="set-start-frame">
                     <span>Set Start Frame</span>
@@ -450,82 +481,172 @@
             const statusText = document.querySelector('.status-text');
             const toast = document.getElementById('toast');
             const tasksList = document.getElementById('tasksList');
-            let globalEventSource = null;
-
             const saturationSlider = document.getElementById('saturation');
             const saturationValue = document.querySelector('.saturation-value');
-            const previewCanvas = document.createElement('canvas');
-            const previewCtx = previewCanvas.getContext('2d');
-
-            let currentSaturation = -10;
-
-            function applySaturation(imageData, saturationValue) {
+    
+            let globalEventSource = null;
+            let startFrame = null;
+            let endFrame = null;
+            let currentSaturation = -13;
+            let cropper = null;
+            let originalImage = null;
+    
+            // Сохраняем оригинальное изображение
+            function saveOriginalImage() {
+                return new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        originalImage = canvas;
+                        resolve();
+                    };
+                    img.src = imageElement.src;
+                });
+            }
+    
+            function applySaturation(canvas, saturationValue) {
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 const data = imageData.data;
                 const adjustment = (saturationValue + 100) / 100;
-
+    
                 for (let i = 0; i < data.length; i += 4) {
                     const r = data[i];
                     const g = data[i + 1];
                     const b = data[i + 2];
-
+    
                     const gray = 0.2989 * r + 0.5870 * g + 0.1140 * b;
-
-                    data[i] = gray + (r - gray) * adjustment;
-                    data[i + 1] = gray + (g - gray) * adjustment;
-                    data[i + 2] = gray + (b - gray) * adjustment;
+    
+                    data[i] = Math.min(255, Math.max(0, gray + (r - gray) * adjustment));
+                    data[i + 1] = Math.min(255, Math.max(0, gray + (g - gray) * adjustment));
+                    data[i + 2] = Math.min(255, Math.max(0, gray + (b - gray) * adjustment));
                 }
-
-                return imageData;
+    
+                ctx.putImageData(imageData, 0, 0);
+                return canvas;
             }
-
-            function updatePreview() {
-                const cropData = cropper.getCropBoxData();
-                const imageData = cropper.getCroppedCanvas().getContext('2d').getImageData(
-                    0, 0, 
-                    cropData.width, 
-                    cropData.height
-                );
-
-                previewCanvas.width = cropData.width;
-                previewCanvas.height = cropData.height;
-
-                const adjustedImageData = applySaturation(imageData, currentSaturation);
-                previewCtx.putImageData(adjustedImageData, 0, 0);
+    
+            async function updateSaturation() {
+                if (!originalImage) return;
+    
+                // Создаем копию оригинального изображения
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = originalImage.width;
+                tempCanvas.height = originalImage.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(originalImage, 0, 0);
+    
+                // Применяем насыщенность
+                applySaturation(tempCanvas, currentSaturation);
+    
+                // Обновляем изображение в кропере без его пересоздания
+                const cropData = cropper.getData();
+                const cropBoxData = cropper.getCropBoxData();
+                const canvasData = cropper.getCanvasData();
+    
+                await new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        cropper.replace(img.src, false);
+                        resolve();
+                    };
+                    img.src = tempCanvas.toDataURL();
+                });
+    
+                // Восстанавливаем положение и размеры кропа
+                cropper.setData(cropData);
+                cropper.setCropBoxData(cropBoxData);
+                cropper.setCanvasData(canvasData);
             }
-
+    
+            // Инициализация Cropper после загрузки оригинального изображения
+            async function initializeCropper() {
+                await saveOriginalImage();
+                
+                cropper = new Cropper(imageElement, {
+                    aspectRatio: 3/4,
+                    viewMode: 1,
+                    responsive: true,
+                    restore: false,
+                    background: false,
+                    modal: true,
+                    guides: true,
+                    center: true,
+                    highlight: false,
+                    cropBoxMovable: true,
+                    cropBoxResizable: true,
+                    toggleDragModeOnDblclick: false,
+                });
+            }
+    
+            // Обработчик изменения насыщенности с debounce
+            let saturationTimeout;
             saturationSlider.addEventListener('input', function() {
                 currentSaturation = parseInt(this.value);
                 saturationValue.textContent = this.value;
-                updatePreview();
+                
+                clearTimeout(saturationTimeout);
+                saturationTimeout = setTimeout(updateSaturation, 100);
             });
-
-            const cropper = new Cropper(imageElement, {
-                aspectRatio: 3/4,
-                viewMode: 1,
-                responsive: true,
-                restore: false,
-                background: false,
-                modal: true,
-                guides: true,
-                center: true,
-                highlight: false,
-                cropBoxMovable: true,
-                cropBoxResizable: true,
-                toggleDragModeOnDblclick: false,
-                crop: function() {
-                    updatePreview();
+    
+            function checkGenerateButton() {
+                generateVideoBtn.disabled = !(startFrame && endFrame);
+            }
+    
+            startFrameBtn.addEventListener('click', () => {
+                startFrame = cropper.getData(true);
+                startFrameBtn.classList.add('active');
+                showToast('Start frame set successfully');
+                updateStatus('Start frame set');
+                checkGenerateButton();
+            });
+    
+            endFrameBtn.addEventListener('click', () => {
+                endFrame = cropper.getData(true);
+                endFrameBtn.classList.add('active');
+                showToast('End frame set successfully');
+                updateStatus('End frame set');
+                checkGenerateButton();
+            });
+    
+            generateVideoBtn.addEventListener('click', async () => {
+                if (!startFrame || !endFrame) return;
+    
+                startVideoGeneration();
+    
+                try {
+                    const response = await fetch('/generate_video', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            startFrame: startFrame,
+                            endFrame: endFrame,
+                            chat_id: "{{ chat_id }}",
+                            task_id: "{{ task_id }}",
+                            saturation: currentSaturation
+                        })
+                    });
+    
+                    const data = await response.json();
+                    if (data.success) {
+                        startEventSource();
+                    } else {
+                        throw new Error(data.message || 'Error starting video generation');
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    showToast(error.message || 'Error generating video', 'error');
+                    resetUI();
                 }
             });
-
-
-            let startFrame = null;
-            let endFrame = null;
-
+    
             function startEventSource() {
-                if (globalEventSource) {
-                    return;
-                }
-
+                if (globalEventSource) return;
+    
                 globalEventSource = new EventSource(`/video_progress/{{ chat_id }}`);
                 
                 globalEventSource.onmessage = function(event) {
@@ -541,7 +662,7 @@
                             if (currentTask) {
                                 progressBarFill.style.width = `${currentTask.progress}%`;
                                 updateStatus(`Processing... ${currentTask.progress}%`, true);
-
+    
                                 if (currentTask.status === 'completed') {
                                     showToast('Video generated successfully!');
                                     setTimeout(() => {
@@ -552,12 +673,10 @@
                                     resetUI();
                                 }
                             }
-
-                            const hasActiveTasks = progressData.tasks.some(
-                                task => task.status === 'pending' || task.status === 'processing'
-                            );
-
-                            if (!hasActiveTasks) {
+    
+                            if (!progressData.tasks.some(task => 
+                                task.status === 'pending' || task.status === 'processing'
+                            )) {
                                 globalEventSource.close();
                                 globalEventSource = null;
                             }
@@ -566,7 +685,7 @@
                         console.error('Error processing event:', error);
                     }
                 };
-
+    
                 globalEventSource.onerror = function(error) {
                     console.error('EventSource error:', error);
                     if (globalEventSource.readyState === EventSource.CLOSED) {
@@ -574,7 +693,7 @@
                     }
                 };
             }
-
+    
             function showToast(message, type = 'success') {
                 toast.textContent = message;
                 toast.className = `toast ${type}`;
@@ -583,18 +702,42 @@
                     toast.classList.remove('show');
                 }, 3000);
             }
-
+    
             function updateStatus(text, isActive = false) {
                 statusText.textContent = text;
                 statusDot.classList.toggle('active', isActive);
             }
-
+    
+            function resetUI() {
+                spinner.style.display = 'none';
+                progressContainer.style.display = 'none';
+                progressBarFill.style.width = '0%';
+                generateVideoBtn.disabled = true;
+                startFrameBtn.disabled = false;
+                endFrameBtn.disabled = false;
+                updateStatus('Ready to start');
+                startFrame = null;
+                endFrame = null;
+                startFrameBtn.classList.remove('active');
+                endFrameBtn.classList.remove('active');
+            }
+    
+            function startVideoGeneration() {
+                spinner.style.display = 'block';
+                progressContainer.style.display = 'block';
+                generateVideoBtn.disabled = true;
+                startFrameBtn.disabled = true;
+                endFrameBtn.disabled = true;
+                progressBarFill.style.width = '0%';
+                updateStatus('Starting video generation', true);
+            }
+    
             function updateTasksList(tasks) {
                 if (!tasks || tasks.length === 0) {
                     tasksList.style.display = 'none';
                     return;
                 }
-
+    
                 let tasksHtml = '';
                 tasks.forEach(task => {
                     const statusClass = `status-${task.status.toLowerCase()}`;
@@ -613,94 +756,22 @@
                         </div>
                     `;
                 });
-
+    
                 tasksList.innerHTML = `
                     <div class="tasks-header">Recent Tasks</div>
                     ${tasksHtml}
                 `;
                 tasksList.style.display = 'block';
             }
-
-            function resetUI() {
-                spinner.style.display = 'none';
-                progressContainer.style.display = 'none';
-                progressBarFill.style.width = '0%';
-                generateVideoBtn.disabled = false;
-                startFrameBtn.disabled = false;
-                endFrameBtn.disabled = false;
-                updateStatus('Ready to start');
-            }
-
-            function startVideoGeneration() {
-                spinner.style.display = 'block';
-                progressContainer.style.display = 'block';
-                generateVideoBtn.disabled = true;
-                startFrameBtn.disabled = true;
-                endFrameBtn.disabled = true;
-                progressBarFill.style.width = '0%';
-                updateStatus('Starting video generation', true);
-            }
-
-            startFrameBtn.addEventListener('click', () => {
-                startFrame = cropper.getData(true);
-                startFrameBtn.classList.add('active');
-                showToast('Start frame set successfully');
-                updateStatus('Start frame set');
-                if (startFrame && endFrame) generateVideoBtn.disabled = false;
-            });
-
-            endFrameBtn.addEventListener('click', () => {
-                endFrame = cropper.getData(true);
-                endFrameBtn.classList.add('active');
-                showToast('End frame set successfully');
-                updateStatus('End frame set');
-                if (startFrame && endFrame) generateVideoBtn.disabled = false;
-            });
-
-            generateVideoBtn.addEventListener('click', async () => {
-                if (!startFrame || !endFrame) return;
-
-                startVideoGeneration();
-
-                try {
-                    const response = await fetch('/generate_video', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            startFrame: startFrame,
-                            endFrame: endFrame,
-                            chat_id: "{{ chat_id }}",
-                            task_id: "{{ task_id }}",
-                            saturation: currentSaturation
-                        })
-                    });
-
-                    const data = await response.json();
-                    if (data.success) {
-                        startEventSource();
-                    } else {
-                        throw new Error(data.message || 'Error starting video generation');
-                    }
-                } catch (error) {
-                    console.error('Error:', error);
-                    showToast(error.message || 'Error generating video', 'error');
-                    resetUI();
-                }
-            });
-
-
-            window.addEventListener('beforeunload', () => {
-                if (globalEventSource) {
-                    globalEventSource.close();
-                    globalEventSource = null;
-                }
-            });
-
-            // Initialize
+    
+            // Инициализация
+            initializeCropper();
             startEventSource();
             updateStatus('Select start and end frames');
             generateVideoBtn.disabled = true;
         });
     </script>
+    
+    
 </body>
 </html>

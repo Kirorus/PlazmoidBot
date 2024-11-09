@@ -12,6 +12,8 @@ class Config:
     # Paths
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     UPLOAD_FOLDER = os.path.join(BASE_DIR, 'static', 'uploads')
+    STATIC_FOLDER = os.path.join(BASE_DIR, 'static')
+    TEMPLATE_FOLDER = os.path.join(BASE_DIR, 'templates')
     
 
     # Flask Settings

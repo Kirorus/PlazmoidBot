@@ -1,5 +1,6 @@
 python-telegram-bot
 flask
+Flask-Cors
 moviepy
 numpy
 scikit-image
